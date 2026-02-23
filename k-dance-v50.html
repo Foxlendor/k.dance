@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>k.dance | BIOMETRIC SYNERGY v50</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700;900&family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+
+    <style>
+        :root {
+            --white: #ffffff;
+            --accent: #00f3ff;
+            --purple: #bd00ff;
+            --gold: #ffcc00;
+            --dark: #050508;
+            --panel: rgba(10, 10, 15, 0.9);
+            --border: rgba(0, 243, 255, 0.3);
+        }
+        * { box-sizing: border-box; user-select: none; }
+        body { margin: 0; overflow: hidden; background: var(--dark); font-family: 'Inter', sans-serif; color: var(--white); touch-action: none; }
+        .full-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #layer-video { z-index: 0; opacity: 0; transition: opacity 1.5s; pointer-events: none; }
+        #video-feed { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.4) contrast(1.6) saturate(0.4) grayscale(0.5); }
+        #layer-canvas { z-index: 5; pointer-events: none; mix-blend-mode: screen; }
+        #output-canvas { width: 100%; height: 100%; object-fit: cover; }
+        #layer-ui { z-index: 20; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 40px; }
+        .header-top { display: flex; justify-content: space-between; align-items: flex-start; }
+        .brand-logo { font-family: 'Rajdhani', sans-serif; font-size: 36px; font-weight: 900; letter-spacing: 12px; color: var(--white); text-shadow: 0 0 25px var(--accent); }
+        .brand-tag { font-family: 'JetBrains Mono'; font-size: 11px; color: var(--accent); letter-spacing: 5px; text-transform: uppercase; font-weight: bold; }
+        .hud-trigger {
+            pointer-events: auto; width: 50px; height: 50px; border: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: center; transition: 0.3s;
+            font-family: 'JetBrains Mono'; font-size: 20px; background: var(--panel);
+            border-radius: 50%; cursor: pointer; color: var(--white); backdrop-filter: blur(10px);
+        }
+        .hud-trigger:hover { border-color: var(--accent); color: var(--dark); background: var(--accent); transform: scale(1.1); box-shadow: 0 0 15px var(--accent); }
+        #master-hud {
+            position: absolute; top: 110px; right: 40px; width: 340px;
+            background: var(--panel); padding: 35px; border: 1px solid var(--border);
+            display: none; pointer-events: auto; z-index: 30; border-radius: 24px;
+            box-shadow: 0 40px 100px rgba(0,0,0,0.9); backdrop-filter: blur(30px);
+        }
+        .slider-group { margin-bottom: 25px; }
+        .label { font-size: 10px; font-family: 'JetBrains Mono'; color: #888; display: block; margin-bottom: 10px; letter-spacing: 3px; text-transform: uppercase; }
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 20px; width: 6px; background: var(--accent); cursor: pointer; margin-top: -9px; border-radius: 2px; box-shadow: 0 0 10px var(--accent); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 2px; background: rgba(255,255,255,0.1); }
+        input[type=text], select { background: rgba(255,255,255,0.05); border: 1px solid #444; color: #fff; padding: 12px; width: 100%; font-family: 'JetBrains Mono'; font-size: 10px; border-radius: 8px; margin-top: 5px; outline: none; transition: 0.2s; }
+        select:hover { border-color: var(--accent); }
+        .btn {
+            background: rgba(255,255,255,0.05); border: 1px solid #444; color: #fff;
+            padding: 14px; width: 100%; font-family: 'JetBrains Mono'; font-size: 10px; font-weight: bold;
+            text-transform: uppercase; cursor: pointer; transition: 0.2s; border-radius: 8px; letter-spacing: 2px; margin-top: 10px;
+        }
+        .btn:hover { border-color: var(--accent); background: rgba(0,243,255,0.1); color: var(--accent); }
+        .btn.active { border-color: var(--accent); background: rgba(0,243,255,0.2); color: var(--accent); }
+        .status-bar {
+            width: 100%; display: flex; justify-content: space-between; align-items: center;
+            padding: 25px 50px; background: rgba(5,5,8,0.95); backdrop-filter: blur(20px);
+            border-radius: 25px; border: 1px solid var(--border); box-shadow: 0 -10px 40px rgba(0,243,255,0.05);
+        }
+        .stat-item { display: flex; flex-direction: column; gap: 6px; }
+        .stat-label { font-family: 'JetBrains Mono'; font-size: 9px; color: #888; letter-spacing: 4px; text-transform: uppercase; }
+        .stat-value { font-family: 'Rajdhani'; font-size: 20px; font-weight: 900; color: var(--accent); letter-spacing: 3px;}
+        #splash {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at center, #111 0%, #000 100%); z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .start-btn {
+            padding: 25px 80px; border: 1px solid var(--accent); color: var(--accent);
+            font-family: 'JetBrains Mono'; font-size: 16px; cursor: pointer; letter-spacing: 15px;
+            background: rgba(0, 243, 255, 0.05); transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1); text-transform: uppercase; border-radius: 12px;
+        }
+        .start-btn:hover { background: var(--accent); color: black; box-shadow: 0 0 60px var(--accent); transform: scale(1.05); }
+        #beat-pulse {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 150px; height: 150px; border: 3px solid var(--accent); border-radius: 50%;
+            opacity: 0; pointer-events: none; transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @media (max-width: 768px) {
+            .status-bar { flex-wrap: wrap; justify-content: center; gap: 15px; padding: 15px; text-align: center; }
+            .stat-item { width: 45%; align-items: center; }
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="video-input" accept="video/*" style="display:none;" onchange="App.handleVideoUpload(event)">
+
+    <div id="beat-pulse"></div>
+    <div id="layer-video" class="full-screen"><video id="video-feed" autoplay playsinline webkit-playsinline muted></video></div>
+    <div id="layer-canvas" class="full-screen"><canvas id="output-canvas"></canvas></div>
+
+    <div id="layer-ui" class="full-screen">
+        <div class="header-top">
+            <div class="brand-block">
+                <div class="brand-logo">k.dance</div>
+                <div class="brand-tag">Captury Bridge Engine // v50</div>
+            </div>
+            <div class="hud-trigger" onclick="App.toggleHUD()">☰</div>
+        </div>
+
+        <div id="master-hud">
+            <div class="slider-group">
+                <span class="label">MoCap Tracking Mode</span>
+                <select id="ui-mode" onchange="Vision.setMode(this.value)">
+                    <option value="mediapipe">Vision AI (Webcam/Mediapipe)</option>
+                    <option value="captury">Captury Live (Network Sync)</option>
+                </select>
+            </div>
+            <div class="slider-group">
+                <span class="label">Musical Key</span>
+                <select id="ui-key" onchange="AudioEng.setKey(this.value)">
+                    <option value="0">C Minor</option>
+                    <option value="2">D Minor</option>
+                    <option value="5">F Minor</option>
+                    <option value="7">G Minor</option>
+                    <option value="9">A Minor</option>
+                </select>
+            </div>
+            <div class="slider-group">
+                <span class="label">Master Saturation</span>
+                <input type="range" id="ui-vol" min="0" max="100" value="85" oninput="AudioEng.setVolume(this.value)">
+            </div>
+            <div class="slider-group">
+                <span class="label">MIDI Output</span>
+                <select id="ui-midi-out" onchange="window.MidiEng.selectOutput(this.value)">
+                    <option value="">No MIDI Device</option>
+                </select>
+            </div>
+            <button class="btn" onclick="document.getElementById('video-input').click()">Upload Video Reference</button>
+            <button class="btn active" id="btn-mirror" onclick="App.toggleMirror()">Matrix Mirror: ON</button>
+        </div>
+
+        <div class="status-bar">
+            <div class="stat-item">
+                <span class="stat-label">Source Sync</span>
+                <span class="stat-value" id="ui-sync" style="color: var(--gold);">Vision AI</span>
+            </div>
+            <div class="stat-item" style="text-align: center;">
+                <span class="stat-label">Biometric Rotation</span>
+                <span class="stat-value text-white" id="ui-rotation">0.00</span>
+            </div>
+            <div class="stat-item" style="text-align: right;">
+                <span class="stat-label">Head Modulation</span>
+                <span class="stat-value" id="ui-mod" style="color: var(--purple);">0.00</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Depth Power</span>
+                <span class="stat-value" id="ui-depth" style="color: var(--gold);">0.00</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="splash">
+        <div class="brand-logo" style="font-size: 80px; margin-bottom: 5px;">K.DANCE</div>
+        <div class="brand-tag" style="margin-bottom: 60px; font-size: 14px; letter-spacing: 8px;">PRO MOCAP + DEPTH STREAMING</div>
+        <button class="start-btn" onclick="App.start()">AWAKEN ENGINE</button>
+    </div>
+
+    <script>
+        // --- UTILS ---
+        function updateUI(id, text) {
+            const el = document.getElementById(id);
+            if (el) el.innerText = text;
+        }
+
+        function makeDistortionCurve(amount = 20) {
+            const k = typeof amount === 'number' ? amount : 50;
+            const n_samples = 44100;
+            const curve = new Float32Array(n_samples);
+            for (let i = 0; i < n_samples; ++i) {
+                const x = i * 2 / n_samples - 1;
+                curve[i] = (3 + k) * x * 20 * (Math.PI/180) / (Math.PI + k * Math.abs(x));
+            }
+            return curve;
+        }
+
+        // --- WEB MIDI API ---
+        const MidiEng = window.MidiEng = {
+            access: null, output: null,
+            init: async function() {
+                if (navigator.requestMIDIAccess) {
+                    try {
+                        this.access = await navigator.requestMIDIAccess();
+                        this.populateOutputs();
+                        this.access.onstatechange = () => this.populateOutputs();
+                    } catch (e) { console.warn("MIDI access denied."); }
+                }
+            },
+            populateOutputs: function() {
+                if (!this.access) return;
+                const select = document.getElementById('ui-midi-out');
+                if(!select) return;
+                const selectedValue = select.value;
+                select.innerHTML = '<option value="">No MIDI Device</option>';
+                for (let output of this.access.outputs.values()) {
+                    let opt = document.createElement('option');
+                    opt.value = output.id; opt.text = output.name;
+                    select.appendChild(opt);
+                }
+                if (selectedValue) select.value = selectedValue;
+            },
+            selectOutput: function(id) {
+                if (!this.access) return;
+                this.output = id ? this.access.outputs.get(id) : null;
+            },
+            sendNoteOn: function(channel, note, velocity) { if (this.output) this.output.send([0x90 + channel, note, velocity]); },
+            sendNoteOff: function(channel, note) { if (this.output) this.output.send([0x80 + channel, note, 0]); }
+        };
+
+        const Vision = {
+            model: null, video: document.getElementById('video-feed'), rig: null, isMirror: true,
+            mode: 'mediapipe', socket: null,
+            
+            init: function() {
+                this.model = new Holistic({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`});
+                this.model.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+                this.model.onResults((res) => { if(this.mode === 'mediapipe') this.rig = res; });
+                this.initCaptury();
+            },
+            
+            setMode: function(m) {
+                this.mode = m;
+                const syncEl = document.getElementById('ui-sync');
+                if (syncEl) {
+                    syncEl.innerText = m === 'captury' ? 'Captury Live' : 'Vision AI';
+                    syncEl.style.color = m === 'captury' ? 'var(--accent)' : 'var(--gold)';
+                }
+            },
+
+            initCaptury: function() {
+                try {
+                    this.socket = new WebSocket('ws://localhost:8080');
+                    this.socket.onmessage = (e) => {
+                        if(this.mode === 'captury') {
+                            const data = JSON.parse(e.data);
+                            if(data.poseLandmarks) this.rig = data;
+                        }
+                    };
+                } catch(e) { console.warn("Captury WebSocket Bridge not detected."); }
+            },
+
+            startCamera: async function() {
+                try {
+                    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
+                    this.video.srcObject = s;
+                    this.video.onloadedmetadata = () => this.video.play().catch(e=>console.log(e));
+                } catch(e) { 
+                    try {
+                        const s = await navigator.mediaDevices.getUserMedia({ video: true });
+                        this.video.srcObject = s;
+                        this.video.onloadedmetadata = () => this.video.play().catch(e=>console.log(e));
+                    } catch(err) { console.error("Camera failed:", err); }
+                }
+            },
+            stop: function() {
+                if(this.video.srcObject) this.video.srcObject.getTracks().forEach(t=>t.stop());
+                this.video.pause(); this.video.srcObject = null; this.rig = null;
+            }
+        };
+
+        const m2f = m => 440 * Math.pow(2, (m - 69) / 12);
+
+        // --- HIGH FIDELITY SYNTHESIS ENGINE ---
+        const AudioEng = window.AudioEng = {
+            ctx: null, master: null, sidechainGain: null,
+            padGain: null, padFilter: null, padOscs: [],
+            bassGain: null, bassFilter: null, bassSub: null,
+            arpGain: null, arpFilter: null,
+            
+            bpm: 110, next16thTime: 0, chordIdx: 0, step: 0,
+            personDetected: false, rootOffset: 0,
+            
+            rotation: 0, 
+            headModX: 0.5,
+            headModY: 0.5,
+            depthPower: 0,  // NEW: from depth estimation
+
+            baseChords: [
+                { name: 'MIN 9', notes: [0, 3, 7, 10, 14], root: -12 },
+                { name: 'MAJ 9', notes: [0, 4, 7, 11, 14], root: -12 },
+                { name: 'MIN 11', notes: [0, 3, 7, 10, 17], root: -12 }
+            ],
+            chords: [],
+
+            init: function() {
+                window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContext();
+
+                this.master = this.ctx.createGain(); this.master.gain.value = 0.85;
+                const comp = this.ctx.createDynamicsCompressor();
+                comp.threshold.value = -12; comp.ratio.value = 8;
+                this.master.connect(comp); comp.connect(this.ctx.destination);
+
+                this.sidechainGain = this.ctx.createGain(); this.sidechainGain.connect(this.master);
+
+                this.padFilter = this.ctx.createBiquadFilter(); this.padFilter.type = 'lowpass';
+                this.padGain = this.ctx.createGain(); this.padGain.gain.value = 0;
+                this.padFilter.connect(this.padGain); this.padGain.connect(this.sidechainGain);
+                for(let i=0; i<5; i++) {
+                    let osc = this.ctx.createOscillator(); osc.type = 'sawtooth';
+                    osc.detune.value = (i-2) * 5;
+                    osc.connect(this.padFilter); osc.start(); this.padOscs.push(osc);
+                }
+
+                this.bassFilter = this.ctx.createBiquadFilter(); this.bassFilter.type = 'lowpass';
+                this.bassGain = this.ctx.createGain(); this.bassGain.gain.value = 0;
+                this.bassSub = this.ctx.createOscillator(); this.bassSub.type = 'sawtooth';
+                this.bassSub.connect(this.bassFilter); this.bassFilter.connect(this.bassGain); this.bassGain.connect(this.sidechainGain);
+                this.bassSub.start();
+
+                this.arpFilter = this.ctx.createBiquadFilter(); this.arpFilter.type = 'lowpass';
+                this.arpGain = this.ctx.createGain(); this.arpGain.gain.value = 0;
+                this.arpFilter.connect(this.arpGain); this.arpGain.connect(this.sidechainGain);
+
+                this.calculateKey();
+                this.scheduler();
+            },
+
+            setKey: function(v) { this.rootOffset = parseInt(v); this.calculateKey(); },
+            calculateKey: function() {
+                const keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "Bb", "B"];
+                this.chords = this.baseChords.map(bc => ({
+                    name: keys[this.rootOffset] + " " + bc.name,
+                    notes: bc.notes.map(n => 48 + this.rootOffset + n),
+                    root: m2f(36 + this.rootOffset)
+                }));
+            },
+
+            setVolume: function(v) { if(this.master) this.master.gain.setTargetAtTime(v/100, this.ctx.currentTime, 0.1); },
+            setBPM: function(v) { this.bpm = parseInt(v); /* const el = document.getElementById('ui-bpm-label'); if(el) el.innerHTML = v + " <span>BPM</span>"; */ },
+
+            triggerDrum: function(type, vel) {
+                if(!this.ctx || !this.personDetected) return;
+                const t = this.ctx.currentTime;
+                const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+                if(type === 'kick') {
+                    o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(40, t+0.1);
+                    g.gain.setValueAtTime(vel * 2, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.4);
+                    this.sidechainGain.gain.setValueAtTime(0.2, t);
+                    this.sidechainGain.gain.setTargetAtTime(1.0, t+0.05, 0.15);
+                } else if(type === 'snare') {
+                    const noise = this.ctx.createBufferSource();
+                    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.1, this.ctx.sampleRate);
+                    for(let i=0; i<buf.length; i++) buf.getChannelData(0)[i] = Math.random() * 2 - 1;
+                    noise.buffer = buf;
+                    g.gain.setValueAtTime(vel, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.12);
+                    noise.connect(g); g.connect(this.master); noise.start(t); return;
+                }
+                o.connect(g); g.connect(this.master); o.start(t); o.stop(t+0.5);
+            },
+
+            playLeadArp: function(height, headX, headY) {
+                if(!this.ctx || !this.personDetected) return;
+                const t = this.ctx.currentTime;
+                const chord = this.chords[this.chordIdx % this.chords.length];
+                const notes = [chord.notes[0], chord.notes[2], chord.notes[3], chord.notes[4]];
+                let idx = Math.floor(Math.max(0, Math.min(0.99, height)) * notes.length);
+                const freq = m2f(notes[idx] + 12);
+
+                const carrier = this.ctx.createOscillator();
+                const modulator = this.ctx.createOscillator();
+                const modGain = this.ctx.createGain();
+                const outGain = this.ctx.createGain();
+
+                carrier.type = 'sine'; carrier.frequency.value = freq;
+                modulator.type = 'sine'; modulator.frequency.value = freq * 1.5;
+                
+                modGain.gain.setValueAtTime(freq * (1 + headY * 5), t);
+                modGain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+
+                const filterFreq = 400 + (headX * 6000);
+                this.arpFilter.frequency.setTargetAtTime(filterFreq, t, 0.1);
+
+                modulator.connect(modGain); modGain.connect(carrier.frequency); 
+                outGain.gain.setValueAtTime(0, t);
+                outGain.gain.linearRampToValueAtTime(0.5, t+0.01);
+                outGain.gain.exponentialRampToValueAtTime(0.001, t+0.35);
+
+                carrier.connect(outGain); outGain.connect(this.arpFilter);
+                modulator.start(t); carrier.start(t);
+                modulator.stop(t+0.5); carrier.stop(t+0.5);
+            },
+
+            scheduler: function() {
+                if(!this.ctx) return;
+                while (this.next16thTime < this.ctx.currentTime + 0.05) {
+                    const t = this.next16thTime;
+                    if (!this.personDetected) {
+                        this.master.gain.setTargetAtTime(0, t, 0.2);
+                    } else {
+                        const targetVol = parseInt(document.getElementById('ui-vol').value) / 100;
+                        this.master.gain.setTargetAtTime(targetVol, t, 0.2);
+
+                        if (this.step % 32 === 0 && this.chords.length > 0) {
+                            this.chordIdx = (this.chordIdx + 1) % this.chords.length;
+                            // const chord = this.chords[this.chordIdx];
+                            // const el = document.getElementById('ui-chord'); if(el) el.innerText = chord.name;
+                            this.padOscs.forEach((o, i) => {
+                                o.frequency.setTargetAtTime(m2f(this.chords[this.chordIdx].notes[i % this.chords[this.chordIdx].notes.length]), t, 0.12);
+                            });
+                        }
+
+                        if (this.step % 16 === 0) this.triggerDrum('kick', 1.0);
+                        if (this.step % 16 === 8) this.triggerDrum('snare', 0.8);
+                        
+                        if (this.step % 2 === 0 && window.Logic.leadActive) {
+                            this.playLeadArp(1 - window.Logic.leadY, this.headModX, this.headModY);
+                        }
+
+                        // Depth reactivity: closer → more intense
+                        this.bassGain.gain.setTargetAtTime(0.4 + this.depthPower * 0.8, t, 0.15);
+                        this.padGain.gain.setTargetAtTime(0.4 + this.depthPower * 0.7, t, 0.1);
+                        if (this.depthPower > 0.65 && this.step % 8 === 0) {
+                            this.triggerDrum('kick', 0.9 + this.depthPower * 0.6);
+                        }
+                    }
+                    this.step++; this.next16thTime += (60 / this.bpm) / 4; 
+                }
+                requestAnimationFrame(() => this.scheduler());
+            }
+        };
+
+        const Logic = window.Logic = {
+            emaPose: null, prevL: {x:0.5, y:0.5}, prevR: {x:0.5, y:0.5},
+            leadActive: false, leadY: 0.5,
+
+            process: function(raw) {
+                if(!raw || !raw.poseLandmarks) {
+                    AudioEng.personDetected = false;
+                    return null;
+                }
+                AudioEng.personDetected = true;
+                const pose = raw.poseLandmarks;
+
+                if(pose[15] && pose[16] && pose[11] && pose[12]) {
+                    const l = pose[15], r = pose[16], sL = pose[11], sR = pose[12], head = pose[0];
+                    const t = AudioEng.ctx ? AudioEng.ctx.currentTime : 0;
+
+                    const shoulderDist = Math.abs(sL.x - sR.x);
+                    AudioEng.rotation = Math.max(0, Math.min(1, (0.25 - shoulderDist) * 4));
+                    updateUI('ui-rotation', AudioEng.rotation.toFixed(2));
+                    
+                    AudioEng.bassFilter.frequency.setTargetAtTime(100 + (AudioEng.rotation * 1500), t, 0.1);
+                    AudioEng.bassGain.gain.setTargetAtTime(0.5 + (AudioEng.rotation * 0.5), t, 0.1);
+
+                    AudioEng.headModX = head.x;
+                    AudioEng.headModY = 1 - head.y; 
+                    updateUI('ui-mod', AudioEng.headModY.toFixed(2));
+
+                    const lEnergy = Math.hypot(l.x-this.prevL.x, l.y-this.prevL.y);
+                    const padCutoff = Math.max(300, Math.min(8000, 400 + ((1-l.y) * 5000) + (lEnergy * 3000)));
+                    AudioEng.padFilter.frequency.setTargetAtTime(padCutoff, t, 0.1);
+                    AudioEng.padGain.gain.setTargetAtTime(0.7, t, 0.2);
+
+                    if(Math.hypot(r.x-this.prevR.x, r.y-this.prevR.y) > 0.01) {
+                        this.leadActive = true; this.leadY = r.y;
+                    } else {
+                        this.leadActive = false;
+                    }
+
+                    this.prevL = {x:l.x, y:l.y}; this.prevR = {x:r.x, y:r.y};
+                }
+                return pose;
+            }
+        };
+
+        // ────────────────────────────────────────────────
+        // DEPTH ESTIMATION (fake LiDAR using Depth Anything V2 quantized)
+        // ────────────────────────────────────────────────
+        const DepthEst = {
+            session: null,
+            isReady: false,
+            frameCounter: 0,
+
+            async start() {
+                try {
+                    // Quantized V2 dynamic small (~26 MB, fast on mobile) from trusted 2026 source
+                    const url = 'https://cdn.glitch.me/0f5359e2-6022-421b-88f7-13e276d0fb33/depthanythingv2-vits-dynamic-quant.onnx';
+                    
+                    this.session = await ort.InferenceSession.create(url, {
+                        executionProviders: ['webgl'],
+                        graphOptimizationLevel: 'all'
+                    });
+                    this.isReady = true;
+                    console.log("Depth estimation ready! Move closer to see music intensify.");
+                    updateUI('ui-sync', 'Depth: Ready');
+                } catch (err) {
+                    console.error("Depth model failed to load:", err);
+                    updateUI('ui-sync', 'Depth: Failed');
+                }
+            },
+
+            async guess(video) {
+                if (!this.isReady || !this.session) return 0;
+
+                try {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = 518;
+                    tempCanvas.height = 518;
+                    const ctx = tempCanvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, 518, 518);
+
+                    const imageData = ctx.getImageData(0, 0, 518, 518);
+                    const input = new ort.Tensor('float32', new Float32Array(518 * 518 * 3), [1, 3, 518, 518]);
+
+                    let idx = 0;
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        input.data[idx++] = imageData.data[i] / 255;
+                        input.data[idx++] = imageData.data[i + 1] / 255;
+                        input.data[idx++] = imageData.data[i + 2] / 255;
+                    }
+
+                    const feeds = { input };
+                    const results = await this.session.run(feeds);
+                    const depthData = results.output.data;  // disparity map (higher = closer)
+
+                    let sum = 0, count = 0;
+                    for (let v of depthData) {
+                        if (v > 0 && isFinite(v)) {
+                            sum += v;
+                            count++;
+                        }
+                    }
+                    const avg = count > 0 ? sum / count : 0;
+
+                    // Normalize to 0–1 (higher disparity = closer → higher power)
+                    const power = Math.max(0, Math.min(1, avg / 0.8));  // tune 0.8 based on testing
+                    AudioEng.depthPower = power;
+                    updateUI('ui-depth', power.toFixed(2));
+
+                    return power;
+                } catch (err) {
+                    console.warn("Depth guess error:", err);
+                    return 0;
+                }
+            }
+        };
+
+        const App = window.App = {
+            init: function() { Vision.init(); MidiEng.init(); },
+            start: function() {
+                if (!AudioEng.ctx) AudioEng.init();
+                document.getElementById('splash').style.display = 'none';
+                Vision.startCamera(); 
+                document.getElementById('layer-video').style.opacity = 1; 
+                DepthEst.start();  // Start loading depth model
+                this.loop();
+            },
+            loop: async function() {
+                if (Vision.mode === 'mediapipe' && Vision.video && Vision.video.readyState >= 2) {
+                    try { await Vision.model.send({image: Vision.video}); } catch(e) {}
+                }
+                const pose = Logic.process(Vision.rig);
+                if (pose) {
+                    const canvas = document.getElementById('output-canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+                    ctx.clearRect(0,0,canvas.width,canvas.height);
+                    ctx.strokeStyle = "rgba(0, 243, 255, 0.7)"; ctx.lineWidth = 4;
+                    [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,25],[24,26]].forEach(b => {
+                        const p1 = pose[b[0]], p2 = pose[b[1]];
+                        if(p1 && p2) {
+                            ctx.beginPath();
+                            let x1 = (Vision.isMirror ? 1-p1.x : p1.x)*canvas.width;
+                            let x2 = (Vision.isMirror ? 1-p2.x : p2.x)*canvas.width;
+                            ctx.moveTo(x1, p1.y*canvas.height);
+                            ctx.lineTo(x2, p2.y*canvas.height);
+                            ctx.stroke();
+                        }
+                    });
+                }
+
+                // Depth estimation (throttled)
+                DepthEst.frameCounter = (DepthEst.frameCounter + 1) % 12;
+                if (DepthEst.frameCounter === 0 && Vision.video.readyState >= 2 && DepthEst.isReady) {
+                    DepthEst.guess(Vision.video);
+                }
+
+                requestAnimationFrame(() => this.loop());
+            },
+            toggleHUD: function() { const h = document.getElementById('master-hud'); h.style.display = h.style.display === 'block' ? 'none' : 'block'; },
+            toggleMirror: function() { Vision.isMirror = !Vision.isMirror; document.getElementById('btn-mirror').innerText = Vision.isMirror ? "Matrix Mirror: ON" : "Matrix Mirror: OFF"; },
+            handleVideoUpload: function(e) {
+                const f = e.target.files[0]; if(!f) return;
+                Vision.stop(); Vision.isMirror = false; 
+                document.getElementById('btn-mirror').innerText = "Matrix Mirror: OFF";
+                document.getElementById('splash').style.display = 'none'; document.getElementById('layer-video').style.opacity = 1; 
+                Vision.video.srcObject = null; Vision.video.src = URL.createObjectURL(f);
+                Vision.video.loop = true; Vision.video.onloadeddata = () => { Vision.video.play(); this.loop(); };
+            }
+        };
+
+        window.onload = () => App.init();
+    </script>
+</body>
+</html>
